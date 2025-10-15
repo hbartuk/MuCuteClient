@@ -96,10 +96,13 @@ class AnomalousPacketTester : Module("AnomalousPacketTester", ModuleCategory.Mis
                 currentLevel = nextLevel
             }
             
-            // <<< ПОБЕДА: Используем публичный builder, как и положено
-            val root = NbtMap.builder()
-                .put("bomb", currentLevel)
-                .build()
+            // <<< ПОБЕДА v2.0: Неубиваемый способ через строитель
+            // 1. Создаем строитель
+            val builder = NbtMap.builder()
+            // 2. Добавляем в него данные
+            builder.put("bomb", currentLevel)
+            // 3. Сам строитель и есть наш NbtMap
+            val root = builder
 
             nbtPacket.setData(root)
             
