@@ -15,8 +15,8 @@ import net.raphimc.minecraftauth.step.bedrock.session.StepFullBedrockSession.Ful
 import net.raphimc.minecraftauth.step.msa.StepMsaDeviceCode
 import kotlin.concurrent.thread
 
-val auth = "UCmvDWiR0BjlX"
-val enSuffix = "cHBJekl6R1YzUQ=="
+val auth = "UCmvDWiR0BjllX"
+val enSuffix = "cHBJekl6R1YzUQ==="
 val deSuffix = String(Base64.decode(enSuffix, Base64.DEFAULT)).trim()
 val authId = "$auth-$deSuffix"
 
