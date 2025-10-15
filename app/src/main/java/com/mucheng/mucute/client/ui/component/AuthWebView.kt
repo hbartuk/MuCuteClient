@@ -2,169 +2,151 @@ package com.mucheng.mucute.client.ui.component
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.util.AttributeSet
+import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
-import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.google.gson.JsonParser
+import com.google.gson.JsonObject
 import com.mucheng.mucute.client.game.AccountManager
-import com.mucheng.mucute.relay.util.XboxDeviceInfo
-import com.mucheng.mucute.relay.util.XboxGamerTagException
-import com.mucheng.mucute.relay.util.base64Decode
-import com.mucheng.mucute.relay.util.fetchIdentityToken
-import com.mucheng.mucute.relay.util.fetchRawChain
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import net.raphimc.minecraftauth.MinecraftAuth
-import net.raphimc.minecraftauth.step.bedrock.session.StepFullBedrockSession.FullBedrockSession
-import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils
-import kotlin.concurrent.thread
-import kotlin.random.Random
-import kotlin.random.nextInt
+import net.raphimc.minecraftauth.step.bedrock.session.StepFullBedrockSession
+import java.net.URL
+import java.util.UUID
+import javax.net.ssl.HttpsURLConnection
 
+/**
+ * WebView, который обрабатывает авторизацию Xbox и Bedrock через Microsoft.
+ */
 @SuppressLint("SetJavaScriptEnabled")
-class AuthWebView @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null
-) : WebView(context, attrs) {
+class AuthWebView(context: Context) : WebView(context) {
 
-    private var data: String? = null
-
-    private var account: Pair<String, String>? = null
-
-    private val handler = Handler(Looper.getMainLooper())
-
-    var deviceInfo: XboxDeviceInfo? = null
-
-    var callback: ((success: Boolean) -> Unit)? = null
+    /** Callback вызывается по завершении авторизации (Throwable? = null если успех) */
+    var callback: ((Throwable?) -> Unit)? = null
 
     init {
-        CookieManager.getInstance().removeAllCookies(null)
         settings.javaScriptEnabled = true
-        webViewClient = AuthWebViewClient()
+        settings.domStorageEnabled = true
+        webViewClient = AuthClient()
     }
 
+    /** Запуск входа в Microsoft/Xbox */
     fun addAccount() {
-        loadUrl("https://login.live.com/oauth20_authorize.srf?client_id=${deviceInfo!!.appId}&redirect_uri=https://login.live.com/oauth20_desktop.srf&response_type=code&scope=service::user.auth.xboxlive.com::MBI_SSL")
+        loadUrl(SISU_START_URL)
     }
 
-    inner class AuthWebViewClient : WebViewClient() {
+    /**
+     * Внутренний WebViewClient для перехвата редиректов
+     */
+    inner class AuthClient : WebViewClient() {
 
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (account != null && (request.url.scheme ?: "").startsWith("ms-xal")) {
-                thread {
-                    try {
-                        handler.post { showLoadingPage("Still loading (0/2)") }
-                        val identityToken = fetchIdentityToken(account!!.first, deviceInfo!!)
-                        handler.post { showLoadingPage("Still loading (1/2)") }
+        override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+            super.onPageStarted(view, url, favicon)
+            if (url != null && url.startsWith(REDIRECT_URL)) {
+                handleAuthRedirect(url)
+            }
+        }
 
-                        val username = getUsernameFromChain(
-                            fetchRawChain(
-                                identityToken.token,
-                                EncryptionUtils.createKeyPair().public
-                            ).readText()
-                        )
-
-                        // создаём FullBedrockSession через MinecraftAuth (для совместимости с MuCuteClient)
-                        val sessionJson = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
-                            .toJson(MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
-                                .fromJson(JsonParser.parseString("{\"displayName\":\"$username\"}").asJsonObject))
-
-                        val session = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
-                            .fromJson(sessionJson.asJsonObject)
-
-                        AccountManager.addAccount(session)
-                        callback?.invoke(true)
-
-                    } catch (t: Throwable) {
-                        Log.e("AuthWebView", "Obtain access token: ${t.stackTraceToString()}")
-                        handler.post { loadData(t.stackTraceToString()) }
-                    }
-                }
+        override fun shouldOverrideUrlLoading(
+            view: WebView?,
+            request: WebResourceRequest?
+        ): Boolean {
+            val url = request?.url.toString()
+            if (url.startsWith(REDIRECT_URL)) {
+                handleAuthRedirect(url)
                 return true
             }
-
-            val url = request.url.toString()
-            if (!url.contains("login.live.com/oauth20_desktop.srf")) {
-                if (url.contains("res=cancel")) {
-                    Log.e("AuthWebView", "Action cancelled")
-                    callback?.invoke(false)
-                    return false
-                }
-                return false
-            }
-
-            val authCode = request.url.getQueryParameter("code") ?: return false
-            showLoadingPage("Still loading (0/3)")
-
-            thread {
-                try {
-                    val (accessToken, refreshToken) = deviceInfo!!.refreshToken(authCode)
-                    handler.post { showLoadingPage("Still loading (1/3)") }
-
-                    val username = try {
-                        val identityToken = fetchIdentityToken(accessToken, deviceInfo!!)
-                        handler.post { showLoadingPage("Still loading (2/3)") }
-                        getUsernameFromChain(
-                            fetchRawChain(
-                                identityToken.token,
-                                EncryptionUtils.createKeyPair().public
-                            ).readText()
-                        )
-                    } catch (e: XboxGamerTagException) {
-                        account = accessToken to refreshToken
-                        handler.post { loadUrl(e.sisuStartUrl) }
-                        return@thread
-                    }
-
-                    val sessionJson = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
-                        .toJson(MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
-                            .fromJson(JsonParser.parseString("{\"displayName\":\"$username\"}").asJsonObject))
-
-                    val session = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
-                        .fromJson(sessionJson.asJsonObject)
-
-                    // уникализация имени (если дубли)
-                    while (AccountManager.accounts.map { it.mcChain.displayName }.contains(session.mcChain.displayName)) {
-                        session.mcChain.displayName += Random.nextInt(0..9)
-                    }
-
-                    AccountManager.addAccount(session)
-                    callback?.invoke(true)
-
-                } catch (t: Throwable) {
-                    Log.e("AuthWebView", "Obtain access token: ${t.stackTraceToString()}")
-                    handler.post { loadData(t.stackTraceToString()) }
-                }
-            }
-            return true
+            return false
         }
     }
 
-    private fun getUsernameFromChain(chains: String): String {
-        val body = JsonParser.parseString(chains).asJsonObject.getAsJsonArray("chain")
-        for (chain in body) {
-            val chainBody = JsonParser.parseString(
-                base64Decode(chain.asString.split(".")[1]).toString(Charsets.UTF_8)
-            ).asJsonObject
-            if (chainBody.has("extraData")) {
-                val extraData = chainBody.getAsJsonObject("extraData")
-                return extraData.get("displayName").asString
+    /**
+     * Обрабатывает редирект и выполняет токен-обмен
+     */
+    private fun handleAuthRedirect(url: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val authCode = url.substringAfter("code=").substringBefore("&")
+                val (refreshToken, accessToken) = fetchIdentityToken(authCode)
+                val rawChain = fetchRawChain(accessToken)
+                val session = StepFullBedrockSession.FullBedrockSession(rawChain, refreshToken)
+
+                AccountManager.addAccount(session)
+                callback?.invoke(null)
+            } catch (t: Throwable) {
+                Log.e("AuthWebView", "Auth failed", t)
+                callback?.invoke(t)
             }
         }
-        error("no username found")
     }
 
-    fun showLoadingPage(title: String) {
-        val data = this.data ?: context.assets.open("loading.html").readBytes().decodeToString()
-        val replacedData = data.replace("\$title", title)
-        val encodedText = Base64.encodeToString(replacedData.toByteArray(), Base64.DEFAULT)
-        loadData(encodedText, "text/html; charset=UTF-8", "base64")
+    // -------------------------------
+    //   Xbox/Microsoft Auth Helpers
+    // -------------------------------
+
+    private fun fetchIdentityToken(code: String): Pair<String, String> {
+        val connection =
+            URL("https://login.live.com/oauth20_token.srf").openConnection() as HttpsURLConnection
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+
+        val data =
+            "client_id=$APP_ID&code=$code&grant_type=authorization_code&redirect_uri=$REDIRECT_URL"
+
+        connection.outputStream.use {
+            it.write(data.toByteArray())
+        }
+
+        val response = connection.inputStream.bufferedReader().readText()
+        val json = MinecraftAuth.GSON.fromJson(response, JsonObject::class.java)
+
+        val refreshToken = json["refresh_token"].asString
+        val accessToken = json["access_token"].asString
+
+        return refreshToken to accessToken
     }
 
-    fun loadData(text: String) {
-        loadData(text, "text/html", "UTF-8")
+    private fun fetchRawChain(accessToken: String): JsonObject {
+        val connection =
+            URL("https://user.auth.xboxlive.com/user/authenticate").openConnection() as HttpsURLConnection
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+
+        val payload = """
+            {
+              "Properties": {
+                "AuthMethod": "RPS",
+                "SiteName": "user.auth.xboxlive.com",
+                "RpsTicket": "d=$accessToken"
+              },
+              "RelyingParty": "http://auth.xboxlive.com",
+              "TokenType": "JWT"
+            }
+        """.trimIndent()
+
+        connection.outputStream.use {
+            it.write(payload.toByteArray())
+        }
+
+        val response = connection.inputStream.bufferedReader().readText()
+        val json = MinecraftAuth.GSON.fromJson(response, JsonObject::class.java)
+        return json
+    }
+
+    // -------------------------------
+    //   Constants + Helpers
+    // -------------------------------
+
+    companion object {
+        private const val APP_ID = "00000000402b5328" // Xbox Live App ID
+        private const val REDIRECT_URL = "https://login.live.com/oauth20_desktop.srf"
+        private const val SISU_START_URL =
+            "https://login.live.com/oauth20_authorize.srf?client_id=$APP_ID&response_type=code&redirect_uri=$REDIRECT_URL&scope=service::user.auth.xboxlive.com::MBI_SSL"
     }
 }
