@@ -42,6 +42,7 @@ import com.mucheng.mucute.client.game.module.effect.WeaknessModule
 import com.mucheng.mucute.client.game.module.effect.WitherModule
 import com.mucheng.mucute.client.game.module.misc.BaritoneModule
 import com.mucheng.mucute.client.game.module.misc.CommandHandlerModule
+import com.mucheng.mucute.client.game.module.misc.AnomalousPacketTester
 import com.mucheng.mucute.client.game.module.misc.DesyncModule
 import com.mucheng.mucute.client.game.module.misc.FakeDeathModule
 import com.mucheng.mucute.client.game.module.misc.FakeXPModule
@@ -96,6 +97,7 @@ object ModuleManager {
     init {
         with(_modules) {
             add(FlyModule())
+            add(AnomalousPacketTesterModule())
             add(ESPModule())
             add(ZoomModule())
             add(AirJumpModule())
