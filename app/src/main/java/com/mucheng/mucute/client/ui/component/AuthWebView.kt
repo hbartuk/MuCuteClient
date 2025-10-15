@@ -13,13 +13,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.google.gson.JsonParser
 import com.mucheng.mucute.client.game.AccountManager
-import com.mucheng.mucute.client.model.Account
 import com.mucheng.mucute.relay.util.XboxDeviceInfo
 import com.mucheng.mucute.relay.util.XboxGamerTagException
 import com.mucheng.mucute.relay.util.base64Decode
 import com.mucheng.mucute.relay.util.fetchIdentityToken
 import com.mucheng.mucute.relay.util.fetchRawChain
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import net.raphimc.minecraftauth.MinecraftAuth
+import net.raphimc.minecraftauth.step.bedrock.session.StepFullBedrockSession.FullBedrockSession
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils
 import kotlin.concurrent.thread
 import kotlin.random.Random
@@ -41,9 +41,7 @@ class AuthWebView @JvmOverloads constructor(
     var callback: ((success: Boolean) -> Unit)? = null
 
     init {
-        CookieManager.getInstance()
-            .removeAllCookies(null)
-
+        CookieManager.getInstance().removeAllCookies(null)
         settings.javaScriptEnabled = true
         webViewClient = AuthWebViewClient()
     }
@@ -54,17 +52,14 @@ class AuthWebView @JvmOverloads constructor(
 
     inner class AuthWebViewClient : WebViewClient() {
 
-        override fun shouldOverrideUrlLoading(
-            view: WebView,
-            request: WebResourceRequest
-        ): Boolean {
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (account != null && (request.url.scheme ?: "").startsWith("ms-xal")) {
                 thread {
                     try {
                         handler.post { showLoadingPage("Still loading (0/2)") }
-                        // fetch username through chain
                         val identityToken = fetchIdentityToken(account!!.first, deviceInfo!!)
                         handler.post { showLoadingPage("Still loading (1/2)") }
+
                         val username = getUsernameFromChain(
                             fetchRawChain(
                                 identityToken.token,
@@ -72,16 +67,17 @@ class AuthWebView @JvmOverloads constructor(
                             ).readText()
                         )
 
-                        AccountManager.accounts.add(
-                            Account(
-                                username,
-                                deviceInfo!!,
-                                account!!.second
-                            )
-                        )
-                        AccountManager.save()
+                        // создаём FullBedrockSession через MinecraftAuth (для совместимости с MuCuteClient)
+                        val sessionJson = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
+                            .toJson(MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
+                                .fromJson(JsonParser.parseString("{\"displayName\":\"$username\"}").asJsonObject))
 
+                        val session = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
+                            .fromJson(sessionJson.asJsonObject)
+
+                        AccountManager.addAccount(session)
                         callback?.invoke(true)
+
                     } catch (t: Throwable) {
                         Log.e("AuthWebView", "Obtain access token: ${t.stackTraceToString()}")
                         handler.post { loadData(t.stackTraceToString()) }
@@ -89,26 +85,25 @@ class AuthWebView @JvmOverloads constructor(
                 }
                 return true
             }
-            val url = request.url.toString().toHttpUrlOrNull() ?: return false
-            if (url.host != "login.live.com" || url.encodedPath != "/oauth20_desktop.srf") {
-                if (url.queryParameter("res") == "cancel") {
+
+            val url = request.url.toString()
+            if (!url.contains("login.live.com/oauth20_desktop.srf")) {
+                if (url.contains("res=cancel")) {
                     Log.e("AuthWebView", "Action cancelled")
                     callback?.invoke(false)
                     return false
                 }
-                Log.e("AuthWebView", "Invalid url ${request.url}")
                 return false
             }
 
-            val authCode = url.queryParameter("code") ?: return false
-
-            // convert m.r3_bay token to refresh token
+            val authCode = request.url.getQueryParameter("code") ?: return false
             showLoadingPage("Still loading (0/3)")
+
             thread {
                 try {
                     val (accessToken, refreshToken) = deviceInfo!!.refreshToken(authCode)
                     handler.post { showLoadingPage("Still loading (1/3)") }
-                    // fetch username through chain
+
                     val username = try {
                         val identityToken = fetchIdentityToken(accessToken, deviceInfo!!)
                         handler.post { showLoadingPage("Still loading (2/3)") }
@@ -120,20 +115,25 @@ class AuthWebView @JvmOverloads constructor(
                         )
                     } catch (e: XboxGamerTagException) {
                         account = accessToken to refreshToken
-                        handler.post {
-                            loadUrl(e.sisuStartUrl)
-                        }
+                        handler.post { loadUrl(e.sisuStartUrl) }
                         return@thread
                     }
 
-                    val account = Account(username, deviceInfo!!, refreshToken)
-                    while (AccountManager.accounts.map { it.remark }.contains(account.remark)) {
-                        account.remark += Random.nextInt(0..9)
-                    }
-                    AccountManager.accounts.add(account)
-                    AccountManager.save()
+                    val sessionJson = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
+                        .toJson(MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
+                            .fromJson(JsonParser.parseString("{\"displayName\":\"$username\"}").asJsonObject))
 
+                    val session = MinecraftAuth.BEDROCK_DEVICE_CODE_LOGIN
+                        .fromJson(sessionJson.asJsonObject)
+
+                    // уникализация имени (если дубли)
+                    while (AccountManager.accounts.map { it.mcChain.displayName }.contains(session.mcChain.displayName)) {
+                        session.mcChain.displayName += Random.nextInt(0..9)
+                    }
+
+                    AccountManager.addAccount(session)
                     callback?.invoke(true)
+
                 } catch (t: Throwable) {
                     Log.e("AuthWebView", "Obtain access token: ${t.stackTraceToString()}")
                     handler.post { loadData(t.stackTraceToString()) }
@@ -141,14 +141,14 @@ class AuthWebView @JvmOverloads constructor(
             }
             return true
         }
-
     }
 
     private fun getUsernameFromChain(chains: String): String {
         val body = JsonParser.parseString(chains).asJsonObject.getAsJsonArray("chain")
         for (chain in body) {
-            val chainBody =
-                JsonParser.parseString(base64Decode(chain.asString.split(".")[1]).toString(Charsets.UTF_8)).asJsonObject
+            val chainBody = JsonParser.parseString(
+                base64Decode(chain.asString.split(".")[1]).toString(Charsets.UTF_8)
+            ).asJsonObject
             if (chainBody.has("extraData")) {
                 val extraData = chainBody.getAsJsonObject("extraData")
                 return extraData.get("displayName").asString
@@ -167,5 +167,4 @@ class AuthWebView @JvmOverloads constructor(
     fun loadData(text: String) {
         loadData(text, "text/html", "UTF-8")
     }
-
 }
