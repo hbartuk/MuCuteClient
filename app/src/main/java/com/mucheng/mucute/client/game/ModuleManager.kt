@@ -97,7 +97,7 @@ object ModuleManager {
     init {
         with(_modules) {
             add(FlyModule())
-            add(AnomalousPacketTesterModule())
+            add(AnomalousPacketTester())
             add(ESPModule())
             add(ZoomModule())
             add(AirJumpModule())
